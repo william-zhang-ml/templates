@@ -1,6 +1,7 @@
 # meant for use with torchvision.transforms
 preprocess:
-  - class_name: ToTensor
+  - module: torchvision.transforms
+    class_name: ToTensor
 
 train:
   module: torchvision.datasets

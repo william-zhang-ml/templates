@@ -1,7 +1,9 @@
 defaults:
-  - dataset: default  # CIFAR10
-  - model: default    # ResNet18
+  - dataset: default       # CIFAR10
+  - model: default         # ResNet18
+  - optimization: default  # Cross-Entropy
   - _self_
 
 device: cuda:0
 num_epochs: 5
+batch_size: 128
