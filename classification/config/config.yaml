@@ -1,4 +1,6 @@
 defaults:
-    - _self_
+  - model: default
+  - _self_
 
+device: cuda:0
 num_epochs: 5

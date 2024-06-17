@@ -1,0 +1,2 @@
+module: torchvision.models
+class_name: resnet18
