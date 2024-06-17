@@ -1,5 +1,6 @@
 defaults:
-  - model: default
+  - dataset: default  # CIFAR10
+  - model: default    # ResNet18
   - _self_
 
 device: cuda:0

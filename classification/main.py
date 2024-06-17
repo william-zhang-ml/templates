@@ -6,6 +6,7 @@ from typing import Any, Dict
 import hydra
 from omegaconf import DictConfig, OmegaConf
 import torch
+from torchvision.transforms import Compose
 from tqdm.auto import tqdm
 
 
@@ -36,6 +37,20 @@ def main(config: DictConfig = None) -> None:
         cfg (DictConfig): script configuration
     """
     device = torch.device(config.device)
+
+    # load dataset
+    preprocess = Compose(
+        build_instance(blueprint) for blueprint in config.dataset.preprocess
+    )
+    train_data = build_instance(
+        config.dataset.train,
+        updates={'transform': preprocess}
+    )
+    valid_data = build_instance(
+        config.dataset.valid,
+        updates={'transform': preprocess}
+    )
+
     _ = build_instance(config.model).to(device)
     for _ in tqdm(range(config.num_epochs)):
         print(device.type)
