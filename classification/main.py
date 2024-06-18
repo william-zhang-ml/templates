@@ -210,6 +210,18 @@ def main(config: DictConfig = None) -> None:
             valid_board.add_scalar('loss', valid_loss, step)
             valid_board.add_scalar('metric', valid_metric_val, step)
 
+    # save final model
+    torch.onnx.export(
+        model,
+        imgs.to(device),
+        outdir / 'final.onnx',
+        input_names=['input'],
+        output_names=['output'],
+        dynamic_axes={
+            'input': {0: 'batch', 1: 'row', 2: 'col'}
+        }
+    )
+
 
 if __name__ == '__main__':
     main()
