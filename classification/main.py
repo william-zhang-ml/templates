@@ -17,7 +17,7 @@ def build_instance(blueprint: DictConfig, updates: Dict = None) -> Any:
 
     Args:
         blueprint (DictConfig): config w/keys module, class_name, kwargs
-        updates (Dict): kwargs not specified in blueprint
+        updates (Dict): additional/non-default kwargs
 
     Returns:
         Any: instance defined by <module>.<class_name>(**kwargs)
@@ -89,7 +89,7 @@ def main(config: DictConfig = None) -> None:
     )
     train_data = build_instance(
         config.dataset.train,
-        updates={'transform': preprocess}
+        {'transform': preprocess}
     )
     train_loader = torch.utils.data.DataLoader(
         dataset=train_data,
@@ -98,7 +98,7 @@ def main(config: DictConfig = None) -> None:
     )
     valid_data = build_instance(
         config.dataset.valid,
-        updates={'transform': preprocess}
+        {'transform': preprocess}
     )
     _ = torch.utils.data.DataLoader(
         dataset=valid_data,
@@ -109,10 +109,19 @@ def main(config: DictConfig = None) -> None:
     # get model and optimizers
     model = build_instance(
         config.model,
-        updates={'num_classes': len(train_data.classes)}
+        {'num_classes': len(train_data.classes)}
     ).to(device)
     criteria = build_instance(config.optimization.criteria)
     metric = get_top1_acc
+    optimizer = build_instance(
+        config.optimization.optimizer,
+        {'params': model.parameters()}
+    )
+    if 'scheduler' in config.optimization:
+        scheduler = build_instance(
+            config.optimization.scheduler,
+            {'optimizer': optimizer}
+        )
 
     for _ in tqdm(range(config.num_epochs)):
         imgs, labels = next(iter(train_loader))
@@ -124,6 +133,13 @@ def main(config: DictConfig = None) -> None:
                 criteria,
                 metric
             )
+
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+        if 'scheduler' in locals():
+            scheduler.step()
 
 
 if __name__ == '__main__':

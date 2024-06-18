@@ -1,3 +1,17 @@
 criteria:
   module: torch.nn
   class_name: CrossEntropyLoss
+
+optimizer:
+  module: torch.optim
+  class_name: SGD
+  kwargs:
+    lr: 1.0e-3
+    momentum: 0.9
+    weight_decay: 1.0e-3
+
+scheduler:
+  module: torch.optim.lr_scheduler
+  class_name: CosineAnnealingWarmRestarts
+  kwargs:
+    T_0: 5
