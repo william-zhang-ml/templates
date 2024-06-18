@@ -2,12 +2,13 @@
 Template classifier training script.
 """
 import importlib
+from pathlib import Path
 from typing import Any, Callable, Dict, Tuple
 import hydra
+from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
 import torch
-import torch.utils
-import torch.utils.data
+from torch.utils.tensorboard import SummaryWriter
 from torchvision.transforms import Compose
 from tqdm.auto import tqdm
 
@@ -29,6 +30,24 @@ def build_instance(blueprint: DictConfig, updates: Dict = None) -> Any:
     if updates:
         instance_kwargs.update(updates)
     return getattr(module, blueprint.class_name)(**instance_kwargs)
+
+
+def get_top1_acc(
+    logits: torch.Tensor,
+    labels: torch.Tensor
+) -> float:
+    """Compute top-1 accuracy.
+
+    Args:
+        logits: network classification logits (batch_size, num_classes)
+        labels: correct category lables (batch_size, )
+
+    Returns:
+        float: top-1 accuracy as a percent
+    """
+    assert logits.ndim == 2
+    correct = logits.argmax(dim=-1) == labels
+    return 100 * correct.sum() / correct.numel()
 
 
 def do_forward_pass(
@@ -56,22 +75,40 @@ def do_forward_pass(
     return loss, metric_val
 
 
-def get_top1_acc(
-    logits: torch.Tensor,
-    labels: torch.Tensor
-) -> float:
-    """Compute top-1 accuracy.
+def do_eval_pass(
+    loader: torch.utils.data.DataLoader,
+    model: torch.nn.Module,
+    criteria: Callable,
+    metric: Callable = None
+) -> Tuple[Any, Any]:
+    """Run input data through the model.
 
     Args:
-        logits: network classification logits (batch_size, num_classes)
-        labels: correct category lables (batch_size, )
+        loader (torch.utils.data.DataLoader): validation batch loader
+        model (torch.nn.Module): neural network to train/validate
+        criteria (Callable): task loss function
+        metric (Callable): task metric
 
     Returns:
-        float: top-1 accuracy as a percent
+        Tuple[Any, Any]: results of calling criteria and metric
     """
-    assert logits.ndim == 2
-    correct = logits.argmax(dim=-1) == labels
-    return 100 * correct.sum() / correct.numel()
+    device = next(model.parameters()).device
+    num_batches = len(loader)
+    outp = []
+    labels = []
+    with torch.no_grad():
+        progbar = tqdm(loader, leave=False)
+        for i_batch, (inp, target) in enumerate(progbar):
+            outp.append(model(inp.to(device)).cpu())
+            labels.append(target)
+            progbar.set_postfix({
+                'batch': f'{i_batch + 1}/{num_batches}'
+            })
+    outp = torch.cat(outp)
+    labels = torch.cat(labels)
+    loss = criteria(outp, labels)
+    metric_val = metric(outp, labels)
+    return loss, metric_val
 
 
 @hydra.main(version_base=None, config_path='config', config_name='config')
@@ -81,7 +118,10 @@ def main(config: DictConfig = None) -> None:
     Args:
         config (DictConfig): script configuration
     """
+    outdir = Path(HydraConfig.get().runtime.output_dir)
     device = torch.device(config.device)
+    train_board = SummaryWriter(log_dir=f'tensorboard/train-{outdir.stem}')
+    valid_board = SummaryWriter(log_dir=f'tensorboard/valid-{outdir.stem}')
 
     # get dataset and batch loaders
     preprocess = Compose(
@@ -100,7 +140,7 @@ def main(config: DictConfig = None) -> None:
         config.dataset.valid,
         {'transform': preprocess}
     )
-    _ = torch.utils.data.DataLoader(
+    valid_loader = torch.utils.data.DataLoader(
         dataset=valid_data,
         batch_size=config.batch_size,
         shuffle=False
@@ -123,23 +163,52 @@ def main(config: DictConfig = None) -> None:
             {'optimizer': optimizer}
         )
 
-    for _ in tqdm(range(config.num_epochs)):
-        imgs, labels = next(iter(train_loader))
-        with torch.autocast(device_type=device.type):
-            loss, metric_val = do_forward_pass(
-                imgs.to(device),
-                labels.to(device),
+    # main training loop
+    progbar = tqdm(range(config.num_epochs))
+    num_batches = len(train_loader)
+    step = 0
+    valid_loss, valid_metric_val = float('nan'), float('nan')
+    for i_epoch in progbar:
+        # per-epoch loop
+        for i_batch, (imgs, labels) in enumerate(train_loader):
+            step += 1
+
+            # gradient descent
+            with torch.autocast(device_type=device.type):
+                loss, metric_val = do_forward_pass(
+                    imgs.to(device),
+                    labels.to(device),
+                    model,
+                    criteria,
+                    metric
+                )
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            # logging
+            progbar.set_postfix({
+                'batch': f'{i_batch + 1}/{num_batches}',
+                'loss': f'{loss:.03f}',
+                'metric': f'{metric_val:.01f}',
+                'valid loss': f'{valid_loss:.03f}',
+                'valid metric': f'{valid_metric_val:.01f}'
+            })
+            train_board.add_scalar('loss', loss, step)
+            train_board.add_scalar('metric', metric_val, step)
+
+        # per-epoch updates
+        if 'scheduler' in locals():
+            scheduler.step()
+        if i_epoch % config.epochs_per_valid == 0:
+            valid_loss, valid_metric_val = do_eval_pass(
+                valid_loader,
                 model,
                 criteria,
                 metric
             )
-
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-
-        if 'scheduler' in locals():
-            scheduler.step()
+            valid_board.add_scalar('loss', valid_loss, step)
+            valid_board.add_scalar('metric', valid_metric_val, step)
 
 
 if __name__ == '__main__':

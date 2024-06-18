@@ -6,4 +6,9 @@ defaults:
 
 device: cuda:0
 num_epochs: 5
+epochs_per_valid: 1
 batch_size: 128
+
+hydra:
+  run:
+    dir: ./runs/${now:%Y%m%d-%H%M%S}
